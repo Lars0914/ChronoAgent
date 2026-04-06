@@ -1,0 +1,357 @@
+{
+  "name": "Chrono24 AI Agent chat (webhook + n8n chat)",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "description": "WEBHOOK + CHAT TRIGGER CONFLICT: n8n Respond to Webhook waits forever if an ENABLED Chat Trigger (response mode: Using Response Nodes) exists upstream in the same workflow. For Postman/API: keep Chat Trigger + Chat entry DISABLED. For n8n Open Chat: enable them and DISABLE Webhook (or use a copy of this workflow) so only one entry path is active."
+  },
+  "nodes": [
+    {
+      "id": "11111111-2222-4333-8444-555555555501",
+      "name": "Webhook (frontend API)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-320, 200],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "chrono24-chat-api",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "11111111-2222-4333-8444-555555555502",
+      "name": "HTTP entry",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [-80, 200],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "chatInput",
+              "type": "string",
+              "value": "={{ $json.body.message || $json.body.chatInput || $json.body.text || '' }}"
+            },
+            {
+              "id": "a2",
+              "name": "sessionId",
+              "type": "string",
+              "value": "={{ $json.body.sessionId || 'webhook-' + $now.toMillis() }}"
+            },
+            {
+              "id": "a3",
+              "name": "replyChannel",
+              "type": "string",
+              "value": "http"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "f0e1d2c3-b4a5-6789-0abc-def123456789",
+      "name": "When chat message received",
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.4,
+      "position": [-320, 0],
+      "disabled": true,
+      "parameters": {
+        "public": false,
+        "availableInChat": false,
+        "options": {
+          "responseMode": "responseNodes"
+        }
+      }
+    },
+    {
+      "id": "11111111-2222-4333-8444-555555555503",
+      "name": "Chat entry",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [-80, 0],
+      "disabled": true,
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "b1",
+              "name": "chatInput",
+              "type": "string",
+              "value": "={{ $json.chatInput }}"
+            },
+            {
+              "id": "b2",
+              "name": "sessionId",
+              "type": "string",
+              "value": "={{ $json.sessionId || 'n8n-chat' }}"
+            },
+            {
+              "id": "b3",
+              "name": "replyChannel",
+              "type": "string",
+              "value": "chat"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [220, 220],
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4o-mini"
+        },
+        "options": {}
+      },
+      "credentials": {
+        "openAiApi": {
+          "id": "credential-id",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+      "name": "Simple Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [380, 220],
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $json.sessionId }}",
+        "contextWindowLength": 20
+      }
+    },
+    {
+      "id": "c3d4e5f6-a7b8-9012-cdef-12345678901",
+      "name": "playbook_reply",
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1.3,
+      "position": [540, 220],
+      "parameters": {
+        "description": "Returns the ONLY approved text you may send the customer for this shop. Call exactly once per user message. Pass scenario: offer (in-app offer / buy at this price), best_price (best or lowest price to buy), duty_free (duty free / tariffs / import tax meaning), shipping_delivery (how the watch is shipped, delivery to customer, receive the item, courier, tracking), defer_product (any question about a specific watch/listing: year, condition, strap colour, previous seller, box/papers, serial, authenticity, specs — you must NOT invent facts), general_engagement (pure small talk or process questions with no listing facts and no price/duty/offer/shipping triggers). After this tool returns, reply to the user with that string verbatim — no extra sentences.",
+        "language": "javaScript",
+        "specifyInputSchema": true,
+        "schemaType": "fromJson",
+        "jsonSchemaExample": "{\n  \"scenario\": \"duty_free\"\n}",
+        "jsCode": "const raw = query;\nlet scenario = 'general_engagement';\nif (raw && typeof raw === 'object' && raw.scenario) {\n  scenario = String(raw.scenario);\n} else if (typeof raw === 'string') {\n  try {\n    const p = JSON.parse(raw);\n    if (p && p.scenario) scenario = String(p.scenario);\n  } catch (e) {}\n}\n\nconst days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];\nconst today = days[new Date().getDay()];\n\nconst dutyFree = [\n  'Depending on the states, we would be able to work out an arrangement which we would absorb the duty and tariff for you- esentially what you see here is what you would net pay',\n  'The team also shared that we can have the insured priority label ready to go for you.',\n  \"As a Singapore registered business, we don't have the same statutory taxes as the US. Our international clients often benefit from this when purchasing from us.\",\n  'Which state are you based in now?',\n].join('\\n');\n\nconst map = {\n  offer: \"I've sent your offer to the team for review and will revert\",\n  best_price:\n    \"Maybe you can send here your desired price for the piece?\\nI'll forward it to the team for review and will revert\",\n  duty_free: dutyFree,\n  shipping_delivery:\n    \"We ship sold watches with insured, tracked delivery. Once your order is confirmed, our team arranges dispatch and shares tracking details with you.\\n\\nExact carrier and delivery time depend on your destination — if you share your country or region, I can have the team confirm the options and ETA for you.\",\n  defer_product: \"I'll check with the team and get back to you on that.\",\n  general_engagement:\n    `Happy ${today}!\\n\\nHey buddy — happy to chat. Are you thinking of this piece for yourself or for someone else? If you tell me what you're looking for, I can help with next steps; anything specific about the watch I'll confirm with our team.`,\n};\n\nreturn map[scenario] || map.general_engagement;\n"
+      }
+    },
+    {
+      "id": "d4e5f6a7-b8c9-0123-def0-456789abcdef",
+      "name": "AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2,
+      "position": [320, 100],
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.chatInput }}",
+        "options": {
+          "systemMessage": "You are a friendly sales chat assistant (Matt / Alientime style). Goal: help close the sale and keep conversation warm.\n\nHard rules:\n- You NEVER invent or guess facts about a specific product/listing (year, condition, strap colour, previous seller, box/papers, movement, serial, size, etc.). Those always map to scenario defer_product.\n- You NEVER answer from your own knowledge for those listing questions — you MUST call playbook_reply first and then send only that text.\n- For price/offer/duty/shipping topics you also MUST use playbook_reply so wording stays approved.\n- After playbook_reply returns, your visible answer to the user must be EXACTLY that string (same words and line breaks). Do not prepend 'Here is the reply' or add sign-offs unless they are already inside the tool text.\n\nScenario guide:\n- User mentions offer submitted, buy at this price, this price acceptance → offer\n- User asks best/lowest price to buy, what's the best price → best_price\n- User asks what duty free means, duties, tariffs, import tax on purchase → duty_free\n- User asks how delivery/shipping works, how they receive the watch, courier, tracking, ship to me → shipping_delivery\n- Anything about the specific goods/listing details → defer_product\n- Otherwise (greeting, small talk, generic buying process without listing facts) → general_engagement\n\nAlways call playbook_reply once per user turn before answering."
+        }
+      }
+    },
+    {
+      "id": "11111111-2222-4333-8444-555555555504",
+      "name": "Route reply (chat vs HTTP)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [560, 100],
+      "parameters": {
+        "jsCode": "const agent = $input.first().json;\nconst reply = String(agent.output ?? agent.text ?? '');\nlet replyChannel = 'chat';\ntry {\n  const rows = $('HTTP entry').all();\n  if (rows.length && rows[0].json.replyChannel === 'http') {\n    replyChannel = 'http';\n  }\n} catch (e) {\n  replyChannel = 'chat';\n}\nreturn [{ json: { reply, replyChannel } }];\n"
+      }
+    },
+    {
+      "id": "11111111-2222-4333-8444-555555555505",
+      "name": "Reply goes to webhook?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [780, 100],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.replyChannel }}",
+              "rightValue": "http",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "11111111-2222-4333-8444-555555555506",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [1020, 40],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ reply: $json.reply }) }}",
+        "options": {
+          "responseCode": 200,
+          "enableStreaming": false
+        }
+      }
+    },
+    {
+      "id": "e5f6a7b8-c9d0-1234-ef01-56789abcdef0",
+      "name": "Send message",
+      "type": "@n8n/n8n-nodes-langchain.chat",
+      "typeVersion": 1.3,
+      "position": [1020, 180],
+      "parameters": {
+        "operation": "send",
+        "message": "={{ $json.reply }}",
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Webhook (frontend API)": {
+      "main": [
+        [
+          {
+            "node": "HTTP entry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP entry": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When chat message received": {
+      "main": [
+        [
+          {
+            "node": "Chat entry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chat entry": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simple Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "playbook_reply": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Route reply (chat vs HTTP)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route reply (chat vs HTTP)": {
+      "main": [
+        [
+          {
+            "node": "Reply goes to webhook?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reply goes to webhook?": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "active": false
+}

@@ -1,0 +1,58 @@
+{
+  "manifest_version": 3,
+  "name": "Chrono24 communications monitor",
+  "version": "1.6.0",
+  "description": "Sends unread Chrono24 messenger text to n8n and posts the reply via send-message.json.",
+  "permissions": ["scripting", "tabs"],
+  "host_permissions": [
+    "https://www.chrono24.com/*",
+    "https://chrono24.com/*",
+    "https://*.chrono24.com/*",
+    "https://www.chrono24.sg/*",
+    "https://chrono24.sg/*",
+    "https://*.chrono24.sg/*",
+    "https://chrono24.app.n8n.cloud/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "icons": {
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.chrono24.com/*",
+        "https://chrono24.com/*",
+        "https://www.chrono24.sg/*",
+        "https://chrono24.sg/*",
+        "https://*.chrono24.sg/*",
+        "https://*.chrono24.com/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_start",
+      "all_frames": true
+    }
+  ],
+  "action": {
+    "default_title": "Chrono24 communications monitor",
+    "default_icon": {
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["inject-main.js"],
+      "matches": [
+        "https://www.chrono24.com/*",
+        "https://chrono24.com/*",
+        "https://*.chrono24.com/*",
+        "https://www.chrono24.sg/*",
+        "https://chrono24.sg/*",
+        "https://*.chrono24.sg/*"
+      ]
+    }
+  ]
+}
