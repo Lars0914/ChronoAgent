@@ -7,6 +7,120 @@
   var MSG_SOURCE = "CHRONO24_EXT_COMMUNICATIONS";
   var POLL_PATH = "/api/messenger/communications.json";
   var DETAIL_PATH = "/api/messenger/communication.json";
+  var SUGGESTION_FORWARD_REPLY =
+    "We have forwarded your suggestion to the team for review and will reply soon.";
+
+  function hasCheckoutStatus(el) {
+    return el && el.checkoutStatus != null;
+  }
+
+  function isCheckoutIn(el) {
+    return hasCheckoutStatus(el) && String(el.direction) === "In";
+  }
+
+  /** Outbound ack after checkout In: direction Out + exact canned text only. */
+  function isSuggestionAckOut(el) {
+    return (
+      el &&
+      String(el.direction) === "Out" &&
+      String(el.message == null ? "" : el.message).trim() === SUGGESTION_FORWARD_REPLY
+    );
+  }
+
+  function hasSuggestionAckAfter(items, afterIndex) {
+    for (var k = afterIndex + 1; k < items.length; k++) {
+      if (isSuggestionAckOut(items[k])) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** Last index where checkoutStatus exists and direction is In; -1 if none. */
+  function lastCheckoutInIndex(items) {
+    var last = -1;
+    for (var i = 0; i < items.length; i++) {
+      if (isCheckoutIn(items[i])) {
+        last = i;
+      }
+    }
+    return last;
+  }
+
+  function autoSuggestionForwardSentKey(communicationId, triggerItem) {
+    var tid =
+      triggerItem &&
+      triggerItem.messageId != null &&
+      String(triggerItem.messageId) !== ""
+        ? String(triggerItem.messageId)
+        : "fallback:" + String(triggerItem && triggerItem.message != null ? triggerItem.message : "").slice(0, 80);
+    return "c24ext:v1:autoSuggestForward:" + communicationId + ":" + tid;
+  }
+
+  function wasAutoSuggestionForwardSentForTrigger(communicationId, triggerItem) {
+    try {
+      return sessionStorage.getItem(autoSuggestionForwardSentKey(communicationId, triggerItem)) === "1";
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function markAutoSuggestionForwardSentForTrigger(communicationId, triggerItem) {
+    try {
+      sessionStorage.setItem(autoSuggestionForwardSentKey(communicationId, triggerItem), "1");
+    } catch (e) {}
+  }
+
+  function lastInItemWithMessage(items) {
+    for (var i = items.length - 1; i >= 0; i--) {
+      var el = items[i];
+      if (!el || String(el.direction) !== "In") {
+        continue;
+      }
+      var m = el.message;
+      if (m != null && String(m).trim() !== "") {
+        return el;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Standard chat: if 2+ items and last has no message → last In with message;
+   * if last has message and direction In → last item; if last is Out (or other)
+   * with text → last In with message so we do not treat our own Out as customer text.
+   */
+  function chooseMessageItemForChat(items) {
+    if (!items || !items.length) {
+      return null;
+    }
+    if (items.length === 1) {
+      return items[0];
+    }
+    var last = items[items.length - 1];
+    var lastMsgRaw = last && last.message != null ? String(last.message) : "";
+    var lastHasMessage = lastMsgRaw.trim() !== "";
+    var lastIsIn = last && String(last.direction) === "In";
+    if (lastHasMessage && lastIsIn) {
+      return last;
+    }
+    if (!lastHasMessage) {
+      return lastInItemWithMessage(items);
+    }
+    return lastInItemWithMessage(items);
+  }
+
+  function postAutoSendMessage(communicationId, message) {
+    window.postMessage(
+      {
+        source: MSG_SOURCE,
+        kind: "autoSendMessage",
+        communicationId: communicationId,
+        message: message,
+      },
+      "*"
+    );
+  }
 
   function debugRelay(line, extra) {
     try {
@@ -149,11 +263,31 @@
               chain(i + 1);
               return;
             }
-            var last = items[items.length - 1];
-            var msgText = last && last.message != null ? String(last.message) : "";
+
+            var checkoutInIdx = lastCheckoutInIndex(items);
+            if (
+              checkoutInIdx >= 0 &&
+              !hasSuggestionAckAfter(items, checkoutInIdx)
+            ) {
+              var triggerItem = items[checkoutInIdx];
+              if (!wasAutoSuggestionForwardSentForTrigger(cid, triggerItem)) {
+                markAutoSuggestionForwardSentForTrigger(cid, triggerItem);
+                postAutoSendMessage(cid, SUGGESTION_FORWARD_REPLY);
+                debugRelay(
+                  "auto-reply suggestion forward (checkout In, no ack)",
+                  String(cid)
+                );
+              }
+              chain(i + 1);
+              return;
+            }
+
+            var chosen = chooseMessageItemForChat(items);
+            var msgText =
+              chosen && chosen.message != null ? String(chosen.message) : "";
             var mid =
-              last && last.messageId != null && last.messageId !== ""
-                ? last.messageId
+              chosen && chosen.messageId != null && chosen.messageId !== ""
+                ? chosen.messageId
                 : "txt:" + String(msgText).slice(0, 80);
             if (!String(msgText).trim()) {
               chain(i + 1);

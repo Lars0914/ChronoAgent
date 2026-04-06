@@ -130,6 +130,19 @@
         });
         return;
       }
+      if (d.kind === "autoSendMessage") {
+        var ac = d.communicationId;
+        var am = d.message;
+        if (ac != null && String(am || "").trim()) {
+          postSendMessageJson(ac, am).catch(function (err) {
+            console.log(
+              "[Chrono24 ext] autoSendMessage failed:",
+              err && err.message ? err.message : err
+            );
+          });
+        }
+        return;
+      }
       if (d.kind === "unreadThreadsBatch" && Array.isArray(d.threads) && d.threads.length) {
         console.log(
           "[Chrono24 ext] content → background unreadThreadsBatch count:",

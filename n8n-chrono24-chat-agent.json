@@ -2,7 +2,7 @@
   "name": "Chrono24 AI Agent chat (webhook + n8n chat)",
   "meta": {
     "templateCredsSetupCompleted": true,
-    "description": "WEBHOOK + CHAT TRIGGER CONFLICT: n8n Respond to Webhook waits forever if an ENABLED Chat Trigger (response mode: Using Response Nodes) exists upstream in the same workflow. For Postman/API: keep Chat Trigger + Chat entry DISABLED. For n8n Open Chat: enable them and DISABLE Webhook (or use a copy of this workflow) so only one entry path is active."
+    "description": "WEBHOOK + CHAT TRIGGER CONFLICT: n8n Respond to Webhook waits forever if an ENABLED Chat Trigger (response mode: Using Response Nodes) exists upstream in the same workflow. For Postman/API: keep Chat Trigger + Chat entry DISABLED. For n8n Open Chat: enable them and DISABLE Webhook (or use a copy of this workflow) so only one entry path is active. Simple Memory Key must not use $json.sessionId (empty on sub-nodes); webhook path uses $('HTTP entry'). For Chat-only runs, set Session ID to Connected Chat Trigger or Key to {{ String($('Chat entry').first().json.sessionId) }}."
   },
   "nodes": [
     {
@@ -37,7 +37,7 @@
               "id": "a2",
               "name": "sessionId",
               "type": "string",
-              "value": "={{ $json.body.sessionId || 'webhook-' + $now.toMillis() }}"
+              "value": "={{ $json.body.sessionId || $json.body.communicationId || $json.body.threadId || $json.body.conversationId || $json.body.chatId || $json.body.userId || 'webhook-default' }}"
             },
             {
               "id": "a3",
@@ -46,6 +46,47 @@
               "value": "http"
             }
           ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "11111111-2222-4333-8444-555555555507",
+      "name": "Prepare reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [140, 200],
+      "parameters": {
+        "jsCode": "const staticData = $getWorkflowStaticData('global');\nstaticData.c24Day = staticData.c24Day || {};\n\nconst item = $input.first().json;\nconst sid = String(item.sessionId || 'anon');\nconst today = new Date().toISOString().slice(0, 10);\n\nconst prev = staticData.c24Day[sid];\nconst isFirstToday = prev !== today;\nstaticData.c24Day[sid] = today;\n\nconst raw = String(item.chatInput || '').trim();\nconst lines = raw\n  .split(/\\r?\\n/)\n  .map((s) => s.trim())\n  .filter((s) => {\n    if (!s) return false;\n    if (/^\\d{1,2}:\\d{2}$/.test(s)) return false;\n    if (/^-{3,}$/.test(s)) return false;\n    if (/^you are trained on data up to/i.test(s)) return false;\n    return true;\n  });\n\nlet latest = raw;\nconst lastTranslateIdx = lines.map((s) => s.toLowerCase()).lastIndexOf('(translate)');\nif (lastTranslateIdx >= 0 && lines[lastTranslateIdx + 1]) {\n  latest = lines[lastTranslateIdx + 1];\n} else if (lines.length) {\n  latest = lines[lines.length - 1];\n}\n\nreturn [\n  {\n    json: {\n      ...item,\n      chatInput: latest,\n      firstToday: isFirstToday,\n      useCanned: false,\n    },\n  },\n];\n"
+      }
+    },
+    {
+      "id": "11111111-2222-4333-8444-555555555508",
+      "name": "Use canned?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [300, 200],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "uc1",
+              "leftValue": "={{ $json.useCanned }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
         },
         "options": {}
       }
@@ -127,23 +168,8 @@
       "position": [380, 220],
       "parameters": {
         "sessionIdType": "customKey",
-        "sessionKey": "={{ $json.sessionId }}",
+        "sessionKey": "={{ String($('Prepare reply').first().json.sessionId) }}",
         "contextWindowLength": 20
-      }
-    },
-    {
-      "id": "c3d4e5f6-a7b8-9012-cdef-12345678901",
-      "name": "playbook_reply",
-      "type": "@n8n/n8n-nodes-langchain.toolCode",
-      "typeVersion": 1.3,
-      "position": [540, 220],
-      "parameters": {
-        "description": "Returns the ONLY approved text you may send the customer for this shop. Call exactly once per user message. Pass scenario: offer (in-app offer / buy at this price), best_price (best or lowest price to buy), duty_free (duty free / tariffs / import tax meaning), shipping_delivery (how the watch is shipped, delivery to customer, receive the item, courier, tracking), defer_product (any question about a specific watch/listing: year, condition, strap colour, previous seller, box/papers, serial, authenticity, specs — you must NOT invent facts), general_engagement (pure small talk or process questions with no listing facts and no price/duty/offer/shipping triggers). After this tool returns, reply to the user with that string verbatim — no extra sentences.",
-        "language": "javaScript",
-        "specifyInputSchema": true,
-        "schemaType": "fromJson",
-        "jsonSchemaExample": "{\n  \"scenario\": \"duty_free\"\n}",
-        "jsCode": "const raw = query;\nlet scenario = 'general_engagement';\nif (raw && typeof raw === 'object' && raw.scenario) {\n  scenario = String(raw.scenario);\n} else if (typeof raw === 'string') {\n  try {\n    const p = JSON.parse(raw);\n    if (p && p.scenario) scenario = String(p.scenario);\n  } catch (e) {}\n}\n\nconst days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];\nconst today = days[new Date().getDay()];\n\nconst dutyFree = [\n  'Depending on the states, we would be able to work out an arrangement which we would absorb the duty and tariff for you- esentially what you see here is what you would net pay',\n  'The team also shared that we can have the insured priority label ready to go for you.',\n  \"As a Singapore registered business, we don't have the same statutory taxes as the US. Our international clients often benefit from this when purchasing from us.\",\n  'Which state are you based in now?',\n].join('\\n');\n\nconst map = {\n  offer: \"I've sent your offer to the team for review and will revert\",\n  best_price:\n    \"Maybe you can send here your desired price for the piece?\\nI'll forward it to the team for review and will revert\",\n  duty_free: dutyFree,\n  shipping_delivery:\n    \"We ship sold watches with insured, tracked delivery. Once your order is confirmed, our team arranges dispatch and shares tracking details with you.\\n\\nExact carrier and delivery time depend on your destination — if you share your country or region, I can have the team confirm the options and ETA for you.\",\n  defer_product: \"I'll check with the team and get back to you on that.\",\n  general_engagement:\n    `Happy ${today}!\\n\\nHey buddy — happy to chat. Are you thinking of this piece for yourself or for someone else? If you tell me what you're looking for, I can help with next steps; anything specific about the watch I'll confirm with our team.`,\n};\n\nreturn map[scenario] || map.general_engagement;\n"
       }
     },
     {
@@ -156,7 +182,7 @@
         "promptType": "define",
         "text": "={{ $json.chatInput }}",
         "options": {
-          "systemMessage": "You are a friendly sales chat assistant (Matt / Alientime style). Goal: help close the sale and keep conversation warm.\n\nHard rules:\n- You NEVER invent or guess facts about a specific product/listing (year, condition, strap colour, previous seller, box/papers, movement, serial, size, etc.). Those always map to scenario defer_product.\n- You NEVER answer from your own knowledge for those listing questions — you MUST call playbook_reply first and then send only that text.\n- For price/offer/duty/shipping topics you also MUST use playbook_reply so wording stays approved.\n- After playbook_reply returns, your visible answer to the user must be EXACTLY that string (same words and line breaks). Do not prepend 'Here is the reply' or add sign-offs unless they are already inside the tool text.\n\nScenario guide:\n- User mentions offer submitted, buy at this price, this price acceptance → offer\n- User asks best/lowest price to buy, what's the best price → best_price\n- User asks what duty free means, duties, tariffs, import tax on purchase → duty_free\n- User asks how delivery/shipping works, how they receive the watch, courier, tracking, ship to me → shipping_delivery\n- Anything about the specific goods/listing details → defer_product\n- Otherwise (greeting, small talk, generic buying process without listing facts) → general_engagement\n\nAlways call playbook_reply once per user turn before answering."
+          "systemMessage": "You are a simple chatbot.\n\nFor each user turn, first classify intent into exactly one of:\n- General\n- Technical\n- Special\n\nDefinitions:\n- Technical: technical aspects/performance/spec details that require expert confirmation (weight, movement, servicing, accuracy, water resistance, parts, measurements, listing-specific factual specs you cannot verify now).\n- Special: only these two topics:\n  1) best-price topic (asks best/lowest price to buy)\n  2) duty-free meaning / import tax / tariff meaning\n- General: everything else (normal conversation, unrelated questions, broad watch opinions, greetings, casual chat).\n\nThen respond by rule:\n1) Technical -> reply exactly:\nI have inform about that to team, will back soon\n\n2) Special -> decide if user's latest message is a question or an answer:\n- If Special + question about best price -> reply exactly:\nMaybe you can send here your desired price for the piece?\nI'll forward it to the team for review and will revert\n\n- If Special + question about duty free -> reply exactly:\nDepending on the states, we would be able to work out an arrangement which we would absorb the duty and tariff for you- esentially what you see here is what you would net pay\nThe team also shared that we can have the insured priority label ready to go for you.\nFollow up also with:\nAs a Singapore registered business, we don't have the same statutory taxes as the US. Our international clients often benefit from this when purchasing from us.\nWhich state are you based in now?\n\n- If Special + answer (e.g. gives desired price, state, or short follow-up answer) -> acknowledge briefly and say you'll pass it to team. Keep to 1 sentence.\n\n3) General -> respond like a normal friendly chatbot in 1-3 short sentences.\n\nImportant:\n- Classify using ONLY latest user message text.\n- Do not let words inside listing titles (for example DUTY FREE in a product name) force Special unless the user is actually asking about duty meaning/tax.\n- Do NOT add any greeting prefix yourself. Greeting is handled outside this model.\n- Never include meta text like model training cutoff."
         }
       }
     },
@@ -167,7 +193,7 @@
       "typeVersion": 2,
       "position": [560, 100],
       "parameters": {
-        "jsCode": "const agent = $input.first().json;\nconst reply = String(agent.output ?? agent.text ?? '');\nlet replyChannel = 'chat';\ntry {\n  const rows = $('HTTP entry').all();\n  if (rows.length && rows[0].json.replyChannel === 'http') {\n    replyChannel = 'http';\n  }\n} catch (e) {\n  replyChannel = 'chat';\n}\nreturn [{ json: { reply, replyChannel } }];\n"
+        "jsCode": "const cur = $input.first().json;\nlet reply = String(cur.reply ?? cur.output ?? cur.text ?? '').trim();\n\nlet prepare = {};\ntry {\n  prepare = $('Prepare reply').first().json;\n} catch (e) {}\n\nconst days = [\n  'Sunday',\n  'Monday',\n  'Tuesday',\n  'Wednesday',\n  'Thursday',\n  'Friday',\n  'Saturday',\n];\nconst weekday = days[new Date().getDay()];\nconst prefix = 'Hey buddy\\nHappy ' + weekday + '!';\n\n// Remove accidental duplicated/placeholder greeting from model output.\nreply = reply.replace(/^Hey buddy\\s*\\n\\s*Happy\\s*\\[[^\\]]+\\]!\\s*/i, '').trim();\nif (reply.toLowerCase().startsWith('hey buddy\\nhappy ' + weekday.toLowerCase() + '!')) {\n  reply = reply.slice(prefix.length).trim();\n}\n\nif (prepare.firstToday === true) {\n  reply = prefix + '\\n\\n' + reply;\n}\n\nlet replyChannel = 'http';\ntry {\n  if (prepare.replyChannel) {\n    replyChannel = prepare.replyChannel;\n  }\n} catch (e) {}\ntry {\n  const rows = $('HTTP entry').all();\n  if (rows.length && rows[0].json.replyChannel) {\n    replyChannel = rows[0].json.replyChannel;\n  }\n} catch (e) {}\n\nreturn [{ json: { reply, replyChannel } }];\n"
       }
     },
     {
@@ -244,7 +270,7 @@
       "main": [
         [
           {
-            "node": "AI Agent",
+            "node": "Prepare reply",
             "type": "main",
             "index": 0
           }
@@ -264,6 +290,35 @@
     },
     "Chat entry": {
       "main": [
+        [
+          {
+            "node": "Prepare reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare reply": {
+      "main": [
+        [
+          {
+            "node": "Use canned?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Use canned?": {
+      "main": [
+        [
+          {
+            "node": "Route reply (chat vs HTTP)",
+            "type": "main",
+            "index": 0
+          }
+        ],
         [
           {
             "node": "AI Agent",
@@ -290,17 +345,6 @@
           {
             "node": "AI Agent",
             "type": "ai_memory",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "playbook_reply": {
-      "ai_tool": [
-        [
-          {
-            "node": "AI Agent",
-            "type": "ai_tool",
             "index": 0
           }
         ]
