@@ -7,8 +7,10 @@
   var MSG_SOURCE = "CHRONO24_EXT_COMMUNICATIONS";
   var POLL_PATH = "/api/messenger/communications.json";
   var DETAIL_PATH = "/api/messenger/communication.json";
-  var SUGGESTION_FORWARD_REPLY =
+  var SUGGESTION_FORWARD_BASE =
     "We have forwarded your suggestion to the team for review and will reply soon.";
+  var SUGGESTION_FORWARD_REPLY =
+    SUGGESTION_FORWARD_BASE + "\nSarah\nalientime.sg";
 
   function hasCheckoutStatus(el) {
     return el && el.checkoutStatus != null;
@@ -20,10 +22,11 @@
 
   /** Outbound ack after checkout In: direction Out + exact canned text only. */
   function isSuggestionAckOut(el) {
+    var outMsg = String(el && el.message == null ? "" : el.message).trim();
     return (
       el &&
       String(el.direction) === "Out" &&
-      String(el.message == null ? "" : el.message).trim() === SUGGESTION_FORWARD_REPLY
+      (outMsg === SUGGESTION_FORWARD_REPLY || outMsg === SUGGESTION_FORWARD_BASE)
     );
   }
 

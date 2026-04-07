@@ -4,6 +4,8 @@ console.log(
 
 const N8N_WEBHOOK_URL =
   "https://chrono24.app.n8n.cloud/webhook/chrono24-chat-api";
+const FIRST_REPLY_DELAY_RANGE_MS = [50000, 90000];
+const FOLLOW_UP_DELAY_RANGE_MS = [12000, 38000];
 
 const CHRONO_TAB_URL_PATTERNS = [
   "https://www.chrono24.com/*",
@@ -36,6 +38,34 @@ function extractN8nReply(responseText) {
   return raw.slice(0, 4000);
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function randInt(min, max) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function firstReplyStorageKey(communicationId) {
+  return "c24:firstReplySent:" + String(communicationId);
+}
+
+async function isFirstReplyForThreadAndMark(communicationId) {
+  const key = firstReplyStorageKey(communicationId);
+  try {
+    const got = await chrome.storage.local.get(key);
+    const seen = !!(got && got[key]);
+    if (!seen) {
+      await chrome.storage.local.set({ [key]: true });
+      return true;
+    }
+    return false;
+  } catch {
+    // Fallback to first-message delay if storage is unavailable.
+    return true;
+  }
+}
+
 async function postMessageToN8n(sessionId, message) {
   const body = {
     message: String(message || "").slice(0, 100000),
@@ -60,14 +90,27 @@ async function postMessageToN8n(sessionId, message) {
   return reply;
 }
 
-function sendReplyViaContentScript(tabId, communicationId, replyText) {
+async function sendReplyViaContentScript(tabId, communicationId, replyText) {
   const trimmed = String(replyText || "").trim();
   if (!trimmed || trimmed.startsWith("[n8n error]")) {
-    return Promise.resolve();
+    return;
   }
   if (tabId == null || tabId < 0) {
-    return Promise.resolve();
+    return;
   }
+  const isFirst = await isFirstReplyForThreadAndMark(communicationId);
+  const range = isFirst ? FIRST_REPLY_DELAY_RANGE_MS : FOLLOW_UP_DELAY_RANGE_MS;
+  const delayMs = randInt(range[0], range[1]);
+  console.log(
+    "[Chrono24 ext] delaying reply",
+    isFirst ? "(first)" : "(follow-up)",
+    "communicationId=",
+    communicationId,
+    "delayMs=",
+    delayMs
+  );
+  await sleep(delayMs);
+
   return new Promise((resolve) => {
     chrome.tabs.sendMessage(
       tabId,
