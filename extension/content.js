@@ -1,5 +1,7 @@
 (function () {
   var MSG_SOURCE = "CHRONO24_EXT_COMMUNICATIONS";
+  var AUTO_SECOND_FOLLOWUP =
+    "Are you thinking of getting this piece for yourself or for someone else?\nSarah\nalientime.sg";
 
   function extensionContextOk() {
     try {
@@ -134,12 +136,16 @@
         var ac = d.communicationId;
         var am = d.message;
         if (ac != null && String(am || "").trim()) {
-          postSendMessageJson(ac, am).catch(function (err) {
-            console.log(
-              "[Chrono24 ext] autoSendMessage failed:",
-              err && err.message ? err.message : err
-            );
-          });
+          postSendMessageJson(ac, am)
+            .then(function () {
+              return postSendMessageJson(ac, AUTO_SECOND_FOLLOWUP);
+            })
+            .catch(function (err) {
+              console.log(
+                "[Chrono24 ext] autoSendMessage failed:",
+                err && err.message ? err.message : err
+              );
+            });
         }
         return;
       }
